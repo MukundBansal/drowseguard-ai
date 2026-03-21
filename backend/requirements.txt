@@ -1,6 +1,2 @@
-opencv-python-headless
-mediapipe
 fastapi
 uvicorn
-scipy
-numpy

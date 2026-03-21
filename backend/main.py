@@ -30,7 +30,7 @@ def get_status():
     return {
         "ear": round(detector.current_ear, 3),
         "alert_state": detector.alert_state,
-        "alert": detector.alert,
+        "alert_active": detector.alert_active,
         "fps": round(detector.fps, 1),
         "session_time": round(detector.session_time, 1)
     }
