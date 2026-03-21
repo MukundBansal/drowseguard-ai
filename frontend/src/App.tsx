@@ -2,7 +2,11 @@ import { useState, useEffect, useRef } from 'react'
 // @ts-ignore
 import { FaceLandmarker, FilesetResolver } from '@mediapipe/tasks-vision'
 import confetti from 'canvas-confetti'
-import { Eye, Brain, Bell, AlertTriangle, CheckCircle, Skull, Cpu, Camera, Clock, Activity, Github, Linkedin, Mail, ShieldAlert } from 'lucide-react'
+import { Eye, Brain, Bell, AlertTriangle, CheckCircle, Skull, Cpu, Camera, Clock, Activity, Github, Linkedin, Mail, ShieldAlert, LogOut } from 'lucide-react'
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { auth, googleProvider } from './firebase'
+import { signInWithPopup, onAuthStateChanged, signOut } from 'firebase/auth'
+import type { User } from 'firebase/auth'
 
 type Status = {
   ear: number
@@ -25,7 +29,8 @@ type GlobalStats = {
   frameCount: number
 }
 
-export default function App() {
+function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => void }) {
+  const [showDropdown, setShowDropdown] = useState(false)
   const [status, setStatus] = useState<Status>({
     ear: 0.0,
     alert_state: 'STANDBY',
@@ -333,11 +338,27 @@ export default function App() {
               <a href="#dashboard" className="hover:text-white transition-colors">Dashboard</a>
               <a href="#about" className="hover:text-white transition-colors">About</a>
             </div>
-            <div className="flex items-center">
-              <a href="#dashboard" className="px-5 py-2.5 bg-transparent hover:bg-white/5 text-white text-sm font-bold rounded-xl border border-white/20 transition-all hover:scale-105 active:scale-95 relative group overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-500 to-purple-600 opacity-0 group-hover:opacity-20 transition-opacity"></div>
-                Try Now
-              </a>
+            <div className="flex items-center relative">
+              <button onClick={() => setShowDropdown(!showDropdown)} className="w-10 h-10 rounded-full border-2 border-white/10 hover:border-blue-500 overflow-hidden transition-all shadow-lg active:scale-95 focus:outline-none">
+                <img src={user.photoURL || ''} alt="User" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              </button>
+
+              {showDropdown && (
+                <div className="absolute right-0 top-14 mt-2 w-56 bg-[#141B2D]/95 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl py-2 z-50 animate-fade-up">
+                  <div className="px-4 py-3 border-b border-white/5">
+                    <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase mb-1">Signed In As</p>
+                    <p className="text-sm font-semibold text-white truncate">{user.displayName}</p>
+                  </div>
+                  <div className="px-2 py-2">
+                    <button 
+                      onClick={() => { setShowDropdown(false); handleSignOut(); }}
+                      className="w-full text-left px-3 py-2 text-red-400 hover:bg-red-500/10 rounded-xl font-medium transition-colors text-sm flex items-center gap-2"
+                    >
+                      <LogOut className="w-4 h-4" /> Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -701,5 +722,119 @@ export default function App() {
         </div>
       </footer>
     </div>
+  )
+}
+
+function LoginPage() {
+  const navigate = useNavigate();
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
+  const handleLogin = async () => {
+    setIsLoggingIn(true);
+    try {
+      await signInWithPopup(auth, googleProvider);
+      navigate('/');
+    } catch (error) {
+      console.error(error);
+      setIsLoggingIn(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-dg-bg flex items-center justify-center bg-grid-pattern relative overflow-hidden selection:bg-blue-500 selection:text-white">
+      <div className="absolute inset-0 bg-gradient-to-b from-[#10152B]/40 to-[#0A0F1E] z-0"></div>
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-600/10 rounded-full blur-[120px] mix-blend-screen animate-pulse pointer-events-none z-0"></div>
+
+      <div className="card-gradient-border p-1 w-full max-w-md z-10 mx-4 animate-fade-up">
+        <div className="bg-[#141B2D]/80 backdrop-blur-2xl rounded-[1.4rem] p-10 flex flex-col items-center text-center shadow-2xl border border-white/5">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-[0_0_30px_rgba(79,70,229,0.5)] mb-6">
+            <Eye className="w-8 h-8 text-white" />
+          </div>
+          
+          <h1 className="text-3xl font-extrabold text-white tracking-tight mb-2">Welcome Back</h1>
+          <p className="text-gray-400 font-medium mb-10 text-sm">Sign in to track your drowsiness history</p>
+          
+          <button 
+            onClick={handleLogin}
+            disabled={isLoggingIn}
+            className="w-full py-4 bg-white hover:bg-gray-100 disabled:opacity-50 text-gray-900 rounded-xl font-bold flex items-center justify-center gap-3 transition-all transform hover:-translate-y-1 active:scale-95 shadow-xl"
+          >
+            {isLoggingIn ? (
+              <div className="w-5 h-5 border-2 border-t-transparent border-gray-900 rounded-full animate-spin"></div>
+            ) : (
+              <svg viewBox="0 0 24 24" width="24" height="24" xmlns="http://www.w3.org/2400/svg">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+              </svg>
+            )}
+            Continue with Google
+          </button>
+          
+          <p className="mt-8 text-xs text-gray-500 font-semibold tracking-wide flex items-center justify-center gap-2">
+            <ShieldAlert className="w-4 h-4" /> Your data stays private and secure
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default function App() {
+  return (
+    <Router>
+      <AppRoutes />
+    </Router>
+  )
+}
+
+function AppRoutes() {
+  const [user, setUser] = useState<User | null>(null)
+  const [loadingAuth, setLoadingAuth] = useState(true)
+  const [justLogged, setJustLogged] = useState(false)
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser && !user) setJustLogged(true);
+      setUser(currentUser)
+      setLoadingAuth(false)
+    })
+    return unsubscribe
+  }, [user])
+
+  const handleSignOut = () => {
+    signOut(auth)
+  }
+
+  if (loadingAuth) return (
+    <div className="min-h-screen bg-dg-bg flex items-center justify-center">
+      <div className="w-8 h-8 border-4 border-t-transparent border-blue-500 rounded-full animate-spin"></div>
+    </div>
+  )
+
+  return (
+    <>
+      {user && (
+        <div className={`fixed bottom-10 right-10 z-50 transition-all duration-700 transform ${justLogged ? 'translate-x-0 opacity-100' : 'translate-x-20 opacity-0 pointer-events-none'}`}>
+          <div className="bg-[#141B2D]/90 backdrop-blur-xl border border-white/10 text-white px-6 py-4 rounded-2xl shadow-[0_10px_40px_-10px_rgba(59,130,246,0.3)] flex items-center gap-4">
+             <div className="w-10 h-10 rounded-full overflow-hidden border border-white/20">
+               <img src={user.photoURL || ''} alt="G" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+             </div>
+             <div className="flex flex-col">
+               <span className="text-xs text-blue-400 font-bold tracking-widest uppercase">Authentication Success</span>
+               <span className="font-semibold text-sm">Welcome back, {user.displayName?.split(' ')[0]}! 👋</span>
+             </div>
+          </div>
+        </div>
+      )}
+
+      {user && justLogged && setTimeout(() => setJustLogged(false), 5000) && null}
+
+      <Routes>
+        <Route path="/login" element={user ? <Navigate to="/" /> : <LoginPage />} />
+        <Route path="/" element={user ? <Dashboard user={user} handleSignOut={handleSignOut} /> : <Navigate to="/login" />} />
+      </Routes>
+    </>
   )
 }
