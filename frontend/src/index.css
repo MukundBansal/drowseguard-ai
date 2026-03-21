@@ -1,18 +1,118 @@
 @import "tailwindcss";
 
 @theme {
+  --font-inter: "Inter", sans-serif;
+
+  /* Premium UI Colors */
   --color-dg-bg: #0A0F1E;
-  --color-dg-card: #141B2D;
+  --color-dg-card: rgba(20, 27, 45, 0.5);
   --color-dg-primary: #3B82F6;
   --color-dg-drowsy: #EF4444;
   --color-dg-awake: #22C55E;
   --color-dg-warning: #F59E0B;
-  --font-inter: "Inter", sans-serif;
 }
 
-body {
-  font-family: var(--font-inter);
-  background-color: var(--color-dg-bg);
-  color: white;
-  margin: 0;
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  body {
+    background-color: var(--color-dg-bg);
+    color: white;
+    font-family: var(--font-inter);
+    overflow-x: hidden;
+  }
+
+  /* Custom Premium Scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0A0F1E;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(59, 130, 246, 0.2);
+    border-radius: 10px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(59, 130, 246, 0.8);
+  }
+}
+
+/* Page load fade in from bottom */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-up {
+  opacity: 0;
+  animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.delay-100 { animation-delay: 100ms; }
+.delay-200 { animation-delay: 200ms; }
+.delay-300 { animation-delay: 300ms; }
+
+/* Subtle animated particle/dot grid */
+.bg-grid-pattern {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: center center;
+}
+
+/* Horizontal scrolling marquee */
+@keyframes scrollLeft {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.animate-marquee {
+  display: flex;
+  width: max-content;
+  animation: scrollLeft 35s linear infinite;
+}
+
+.animate-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Slide in animation for timeline events */
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-slide-in {
+  animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Rotating gradient border for Developer profile */
+@keyframes spinBorder {
+  0% { --angle: 0deg; }
+  100% { --angle: 360deg; }
+}
+
+@property --angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.card-gradient-border {
+  position: relative;
+  border-radius: 1.5rem;
+  background: #141B2D;
+}
+
+.card-gradient-border::before {
+  content: "";
+  position: absolute;
+  top: -2px; left: -2px; right: -2px; bottom: -2px;
+  background: conic-gradient(from var(--angle), transparent 20%, #3B82F6, #8B5CF6, transparent 80%);
+  border-radius: 1.6rem;
+  z-index: -1;
+  animation: spinBorder 4s linear infinite;
+  opacity: 0.5;
 }
