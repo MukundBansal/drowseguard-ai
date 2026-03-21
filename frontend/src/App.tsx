@@ -23,7 +23,7 @@ function App() {
     if (isDetecting) {
       interval = window.setInterval(async () => {
         try {
-          const res = await fetch('http://localhost:8002/status')
+          const res = await fetch('https://drowseguardai.onrender.com/status')
           if (res.ok) {
             const data = await res.json()
             setStatus(data)
