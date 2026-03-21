@@ -4,32 +4,8 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 import numpy as np
 import time
-import pygame
 from scipy.spatial import distance as dist
 import threading
-import os
-import wave
-import struct
-
-def generate_beep():
-    # Generate a simple beep sound and save to alarm.wav if not exists
-    if not os.path.exists("alarm.wav"):
-        sample_rate = 44100
-        duration = 1.0  # seconds
-        frequency = 1000.0  # Hz
-        
-        n_samples = int(sample_rate * duration)
-        amplitude = 32767.0
-        
-        with wave.open("alarm.wav", "w") as wav_file:
-            wav_file.setnchannels(1)
-            wav_file.setsampwidth(2)
-            wav_file.setframerate(sample_rate)
-            
-            for i in range(n_samples):
-                value = int(amplitude * np.sin(2.0 * np.pi * frequency * i / sample_rate))
-                data = struct.pack('<h', value)
-                wav_file.writeframesraw(data)
 
 class DrowsinessDetector:
     def __init__(self):
@@ -54,15 +30,10 @@ class DrowsinessDetector:
         # Real-time data
         self.current_ear = 0.0
         self.alert_state = "AWAKE"
+        self.alert = False
         self.fps = 0.0
         self.start_time = time.time()
         self.session_time = 0.0
-        
-        # Audio setup
-        pygame.mixer.init()
-        generate_beep()
-        self.beep_sound = pygame.mixer.Sound("alarm.wav")
-        self.is_playing = False
         
         self.running = False
         self.thread = None
@@ -125,24 +96,19 @@ class DrowsinessDetector:
                         self.frame_counter += 1
                         if self.frame_counter >= self.CONSECUTIVE_FRAMES:
                             self.alert_state = "DROWSY"
-                            if not self.is_playing:
-                                self.beep_sound.play(-1) # Play on loop
-                                self.is_playing = True
+                            self.alert = True
                         else:
                             self.alert_state = "WARNING"
+                            self.alert = False
                     else:
                         self.frame_counter = 0
                         self.alert_state = "AWAKE"
-                        if self.is_playing:
-                            self.beep_sound.stop()
-                            self.is_playing = False
+                        self.alert = False
             else:
                 self.alert_state = "WARNING" # Couldn't detect face
+                self.alert = False
 
         self.cap.release()
-        if self.is_playing:
-            self.beep_sound.stop()
-            self.is_playing = False
 
     def start(self):
         if self.thread is None or not self.thread.is_alive():
