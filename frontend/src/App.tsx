@@ -10,7 +10,8 @@ import type { User } from 'firebase/auth'
 
 type Status = {
   ear: number
-  alert_state: 'AWAKE' | 'WARNING' | 'DROWSY' | 'STANDBY'
+  mar: number
+  alert_state: 'AWAKE' | 'WARNING' | 'YAWNING' | 'DROWSY' | 'CRITICAL' | 'STANDBY'
   fps: number
   session_time: number
 }
@@ -25,6 +26,7 @@ type LogEvent = {
 type GlobalStats = {
   totalSessions: number
   drowsyEpisodes: number
+  yawnEpisodes: number
   earSum: number
   frameCount: number
 }
@@ -33,6 +35,7 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
   const [showDropdown, setShowDropdown] = useState(false)
   const [status, setStatus] = useState<Status>({
     ear: 0.0,
+    mar: 0.0,
     alert_state: 'STANDBY',
     fps: 0.0,
     session_time: 0.0
@@ -47,6 +50,7 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
   const [stats, setStats] = useState<GlobalStats>({
     totalSessions: 0,
     drowsyEpisodes: 0,
+    yawnEpisodes: 0,
     earSum: 0,
     frameCount: 0
   })
@@ -58,6 +62,7 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
   const requestRef = useRef<number | undefined>(undefined)
   const lastVideoTimeRef = useRef<number>(-1)
   const consecutiveFramesRef = useRef(0)
+  const consecutiveYawnFramesRef = useRef(0)
   const startTimeRef = useRef(0)
   const prevTimeRef = useRef(0)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -65,6 +70,8 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
 
   const EAR_THRESHOLD = 0.25
   const CONSECUTIVE_FRAMES = 20
+  const MAR_THRESHOLD = 0.6
+  const YAWN_CONSECUTIVE_FRAMES = 15
 
   const LEFT_EYE = [362, 385, 387, 263, 373, 380]
   const RIGHT_EYE = [33, 160, 158, 133, 153, 144]
@@ -80,6 +87,17 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
     const C = getEuclideanDistance(p[0], p[3])
     if (C === 0) return 0.0
     return (A + B) / (2.0 * C)
+  }
+
+  const calculateMAR = (landmarks: any[]) => {
+    const p1 = landmarks[78], p2 = landmarks[82], p3 = landmarks[13], p4 = landmarks[312]
+    const p5 = landmarks[308], p6 = landmarks[317], p7 = landmarks[14], p8 = landmarks[87]
+    const A = getEuclideanDistance(p2, p8)
+    const B = getEuclideanDistance(p3, p7)
+    const C = getEuclideanDistance(p4, p6)
+    const distCorners = getEuclideanDistance(p1, p5)
+    if (distCorners === 0) return 0.0
+    return (A + B + C) / (2.0 * distCorners)
   }
 
   const playBeep = () => {
@@ -167,6 +185,7 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
       startTimeRef.current = performance.now()
       prevTimeRef.current = performance.now()
       consecutiveFramesRef.current = 0
+      consecutiveYawnFramesRef.current = 0
       
       setStats(prev => ({ ...prev, totalSessions: prev.totalSessions + 1 }))
       
@@ -187,30 +206,40 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
           const result = faceLandmarkerRef.current.detectForVideo(video, currTime)
           
           let currentEar = 0
-          let state: 'AWAKE' | 'WARNING' | 'DROWSY' = 'AWAKE'
+          let currentMar = 0
+          let state: 'AWAKE' | 'WARNING' | 'YAWNING' | 'DROWSY' | 'CRITICAL' = 'AWAKE'
 
           if (result.faceLandmarks && result.faceLandmarks.length > 0) {
             const landmarks = result.faceLandmarks[0]
-            const leftEar = calculateEAR(LEFT_EYE, landmarks)
-            const rightEar = calculateEAR(RIGHT_EYE, landmarks)
-            currentEar = (leftEar + rightEar) / 2.0
+            currentEar = (calculateEAR(LEFT_EYE, landmarks) + calculateEAR(RIGHT_EYE, landmarks)) / 2.0
+            currentMar = calculateMAR(landmarks)
 
-            if (currentEar < EAR_THRESHOLD) {
-              consecutiveFramesRef.current += 1
-              if (consecutiveFramesRef.current >= CONSECUTIVE_FRAMES) {
-                state = 'DROWSY'
-              } else {
-                state = 'WARNING'
-              }
-            } else if (currentEar >= 0.25 && currentEar < 0.28) {
-              consecutiveFramesRef.current = 0
+            const isEyeClosed = currentEar < EAR_THRESHOLD
+            const isYawning = currentMar > MAR_THRESHOLD
+
+            if (isEyeClosed) consecutiveFramesRef.current += 1
+            else consecutiveFramesRef.current = 0
+
+            if (isYawning) consecutiveYawnFramesRef.current += 1
+            else consecutiveYawnFramesRef.current = 0
+
+            const triggeredDrowsy = consecutiveFramesRef.current >= CONSECUTIVE_FRAMES
+            const triggeredYawn = consecutiveYawnFramesRef.current >= YAWN_CONSECUTIVE_FRAMES
+
+            if (triggeredDrowsy && triggeredYawn) {
+              state = 'CRITICAL'
+            } else if (triggeredDrowsy) {
+              state = 'DROWSY'
+            } else if (triggeredYawn) {
+              state = 'YAWNING'
+            } else if (currentEar < 0.28 || currentMar > 0.4) {
               state = 'WARNING'
             } else {
-              consecutiveFramesRef.current = 0
               state = 'AWAKE'
             }
           } else {
             consecutiveFramesRef.current = 0
+            consecutiveYawnFramesRef.current = 0
             state = 'WARNING' // Cannot see face
           }
 
@@ -226,19 +255,26 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
 
           // Audio & Logs Context
           setStatus(prev => {
-            if (state === 'DROWSY' && prev.alert_state !== 'DROWSY') {
+            if (state === 'CRITICAL' && prev.alert_state !== 'CRITICAL') {
+              playBeep(); setTimeout(playBeep, 200)
+              addLog(`⚠️ Critical: Eyes + Yawn (EAR: ${currentEar.toFixed(2)}, MAR: ${currentMar.toFixed(2)})`, "error")
+              setStats(s => ({ ...s, drowsyEpisodes: s.drowsyEpisodes + 1, yawnEpisodes: s.yawnEpisodes + 1 }))
+              setShowToast(true); setTimeout(() => setShowToast(false), 4000)
+            } else if (state === 'DROWSY' && prev.alert_state !== 'DROWSY' && prev.alert_state !== 'CRITICAL') {
               playBeep()
-              addLog(`DROWSY EPISODE DETECTED! (EAR: ${currentEar.toFixed(2)})`, "error")
+              addLog(`😴 Drowsy detected (EAR: ${currentEar.toFixed(2)})`, "error")
               setStats(s => ({ ...s, drowsyEpisodes: s.drowsyEpisodes + 1 }))
-              
-              // Trigger toast
-              setShowToast(true)
-              setTimeout(() => setShowToast(false), 4000)
-            } else if (state === 'DROWSY') {
+              setShowToast(true); setTimeout(() => setShowToast(false), 4000)
+            } else if (state === 'YAWNING' && prev.alert_state !== 'YAWNING' && prev.alert_state !== 'CRITICAL') {
+              addLog(`🥱 Yawn detected (MAR: ${currentMar.toFixed(2)})`, "warn")
+              setStats(s => ({ ...s, yawnEpisodes: s.yawnEpisodes + 1 }))
+            } else if (state === 'CRITICAL' || state === 'DROWSY') {
               if (consecutiveFramesRef.current % 10 === 0) playBeep()
             }
+            
             return {
               ear: currentEar,
+              mar: currentMar,
               alert_state: state,
               fps: fps,
               session_time: (currTime - startTimeRef.current) / 1000
@@ -292,10 +328,14 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
 
   const isDrowsy = status.alert_state === 'DROWSY'
   const isWarning = status.alert_state === 'WARNING'
+  const isYawning = status.alert_state === 'YAWNING'
+  const isCritical = status.alert_state === 'CRITICAL'
   const isStandby = status.alert_state === 'STANDBY'
   
-  const stateColor = isDrowsy ? '#EF4444' : isWarning ? '#F59E0B' : isStandby ? '#64748B' : '#3B82F6'
-  const glowBorderClass = isDrowsy ? 'border-red-500 shadow-[0_0_40px_-5px_rgba(239,68,68,0.7)]' : 
+  const stateColor = isCritical ? '#DC2626' : isDrowsy ? '#EF4444' : isYawning ? '#F97316' : isWarning ? '#F59E0B' : isStandby ? '#64748B' : '#3B82F6'
+  const glowBorderClass = isCritical ? 'border-red-600 shadow-[0_0_50px_-5px_rgba(220,38,38,0.9)] animate-pulse' :
+                          isDrowsy ? 'border-red-500 shadow-[0_0_40px_-5px_rgba(239,68,68,0.7)]' : 
+                          isYawning ? 'border-orange-500 shadow-[0_0_40px_-5px_rgba(249,115,22,0.7)]' :
                           isWarning ? 'border-amber-500 shadow-[0_0_30px_-5px_rgba(245,158,11,0.5)]' : 
                           isStandby ? 'border-white/10 shadow-lg' :
                           'border-blue-500 shadow-[0_0_30px_-5px_rgba(59,130,246,0.3)]'
@@ -305,11 +345,16 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
   // Semicircular Gauge calculations
   const radius = 55
   const circumference = Math.PI * radius
-  const maxEar = 0.45
-  const fillPercentage = isDetecting ? Math.min((status.ear / maxEar) * 100, 100) : 0
-  const activeDashOffset = circumference - (fillPercentage / 100) * circumference
   
-  const thresholdAngle = ((0.25 / 0.45) * 180) - 90
+  const maxEar = 0.45
+  const fillPercentageEar = isDetecting ? Math.min((status.ear / maxEar) * 100, 100) : 0
+  const activeDashOffsetEar = circumference - (fillPercentageEar / 100) * circumference
+  const thresholdAngleEar = ((0.25 / 0.45) * 180) - 90
+
+  const maxMar = 1.0
+  const fillPercentageMar = isDetecting ? Math.min((status.mar / maxMar) * 100, 100) : 0
+  const activeDashOffsetMar = circumference - (fillPercentageMar / 100) * circumference
+  const thresholdAngleMar = ((0.6 / 1.0) * 180) - 90
 
   return (
     <div className="min-h-screen bg-dg-bg text-white font-inter selection:bg-blue-500 selection:text-white bg-grid-pattern overflow-x-hidden animate-fade-up">
@@ -396,7 +441,7 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
               <Cpu className="w-4 h-4 text-blue-400" /> 25ms Response
             </div>
             <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
-              <Eye className="w-4 h-4 text-purple-400" /> 478 Landmarks
+              <Eye className="w-4 h-4 text-purple-400" /> Powered by EAR + MAR Detection
             </div>
             <div className="flex items-center gap-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
               <ShieldAlert className="w-4 h-4 text-green-400" /> 99% Uptime
@@ -518,61 +563,93 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
             <div className="w-full lg:w-[40%] flex flex-col gap-4 h-full">
               
               <div className="flex gap-4 h-48">
-                {/* SVG Semicircle Gauge Card */}
-                <div className="bg-dg-card border border-white/5 rounded-3xl p-5 shadow-xl flex-1 flex flex-col items-center relative overflow-hidden backdrop-blur-2xl">
+                {/* SVG Semicircle Gauge Card (EAR) */}
+                <div className="bg-dg-card border border-white/5 rounded-3xl p-4 shadow-xl flex-[1.2] flex flex-col items-center relative overflow-hidden backdrop-blur-2xl">
                   {isDetecting && <div className={`absolute -top-10 -right-10 w-32 h-32 rounded-full blur-3xl opacity-20 bg-${stateColor.replace('#', '')}`}></div>}
-                  <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest w-full text-left mb-2">Eye Aspect Ratio</span>
+                  <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest w-full text-center mb-2">Eye Aspect Ratio</span>
                   
-                  <div className="relative w-36 h-20 flex flex-col items-center justify-end">
+                  <div className="relative w-32 h-16 flex flex-col items-center justify-end">
                     <svg className="w-full h-full transform" viewBox="0 0 140 70">
                       <path d="M 15 65 A 55 55 0 0 1 125 65" className="stroke-gray-800" strokeWidth="12" fill="transparent" strokeLinecap="round" />
                       <path d="M 15 65 A 55 55 0 0 1 125 65" 
                             className={`transition-all duration-300 ease-out`} 
-                            stroke={isDetecting ? stateColor : 'transparent'}
+                            stroke={isDetecting ? (status.ear < 0.25 ? '#EF4444' : '#3B82F6') : 'transparent'}
                             strokeWidth="12" fill="transparent" strokeLinecap="round"
                             strokeDasharray={Math.PI * 55}
-                            strokeDashoffset={isDetecting ? activeDashOffset : Math.PI * 55} 
+                            strokeDashoffset={isDetecting ? activeDashOffsetEar : Math.PI * 55} 
                       />
                       {/* Threshold marker */}
-                      <line x1="70" y1="2" x2="70" y2="15" className="stroke-red-500/80" strokeWidth="3" strokeLinecap="round" transform={`rotate(${thresholdAngle} 70 65)`}/>
+                      <line x1="70" y1="2" x2="70" y2="15" className="stroke-red-500/80" strokeWidth="3" strokeLinecap="round" transform={`rotate(${thresholdAngleEar} 70 65)`}/>
                     </svg>
                     <div className="absolute bottom-[-5px] flex flex-col items-center">
-                      <span className={`text-4xl font-black tabular-nums tracking-tighter`} style={{ color: isDetecting ? stateColor : '#fff' }}>
+                      <span className={`text-3xl font-black tabular-nums tracking-tighter`} style={{ color: isDetecting ? (status.ear < 0.25 ? '#EF4444' : '#fff') : '#fff' }}>
                         {isDetecting ? status.ear.toFixed(3) : '0.00'}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                {/* Status Badge Card */}
-                <div className="bg-dg-card border border-white/5 rounded-3xl p-5 shadow-xl flex-[0.8] flex flex-col items-center justify-center relative backdrop-blur-2xl transition-colors duration-500" style={{ backgroundColor: isDetecting && isDrowsy ? 'rgba(239, 68, 68, 0.1)' : '' }}>
-                  <div className="w-16 h-16 rounded-full flex items-center justify-center mb-3 shadow-[0_0_20px_rgba(0,0,0,0.3)]" style={{ backgroundColor: `${stateColor}20`, border: `1px solid ${stateColor}40` }}>
-                    {isStandby ? <Clock className="w-8 h-8 text-gray-500" /> : 
-                     isWarning ? <AlertTriangle className="w-8 h-8 text-amber-500" /> : 
-                     isDrowsy ? <Skull className="w-8 h-8 text-red-500 animate-pulse" /> : 
-                     <CheckCircle className="w-8 h-8 text-blue-500" />}
+                {/* SVG Semicircle Gauge Card (MAR) */}
+                <div className="bg-dg-card border border-white/5 rounded-3xl p-4 shadow-xl flex-[1.2] flex flex-col items-center relative overflow-hidden backdrop-blur-2xl">
+                  {isDetecting && <div className={`absolute -top-10 -right-10 w-32 h-32 rounded-full blur-3xl opacity-20 bg-orange-500/20`}></div>}
+                  <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest w-full text-center mb-2">Mouth Aspect Ratio</span>
+                  
+                  <div className="relative w-32 h-16 flex flex-col items-center justify-end">
+                    <svg className="w-full h-full transform" viewBox="0 0 140 70">
+                      <path d="M 15 65 A 55 55 0 0 1 125 65" className="stroke-gray-800" strokeWidth="12" fill="transparent" strokeLinecap="round" />
+                      <path d="M 15 65 A 55 55 0 0 1 125 65" 
+                            className={`transition-all duration-300 ease-out`} 
+                            stroke={isDetecting ? (status.mar > 0.6 ? '#F97316' : '#3B82F6') : 'transparent'}
+                            strokeWidth="12" fill="transparent" strokeLinecap="round"
+                            strokeDasharray={Math.PI * 55}
+                            strokeDashoffset={isDetecting ? activeDashOffsetMar : Math.PI * 55} 
+                      />
+                      {/* Threshold marker */}
+                      <line x1="70" y1="2" x2="70" y2="15" className="stroke-orange-500/80" strokeWidth="3" strokeLinecap="round" transform={`rotate(${thresholdAngleMar} 70 65)`}/>
+                    </svg>
+                    <div className="absolute bottom-[-5px] flex flex-col items-center">
+                      <span className={`text-3xl font-black tabular-nums tracking-tighter`} style={{ color: isDetecting ? (status.mar > 0.6 ? '#F97316' : '#fff') : '#fff' }}>
+                        {isDetecting ? status.mar.toFixed(3) : '0.00'}
+                      </span>
+                    </div>
                   </div>
-                  <span className="text-xl font-bold tracking-tight" style={{ color: stateColor }}>{status.alert_state}</span>
+                </div>
+
+                {/* Status Badge Card */}
+                <div className="bg-dg-card border border-white/5 rounded-3xl p-4 shadow-xl flex-[1] flex flex-col items-center justify-center relative backdrop-blur-2xl transition-colors duration-500" style={{ backgroundColor: isDetecting && (isDrowsy || isCritical) ? 'rgba(239, 68, 68, 0.1)' : '' }}>
+                  <div className="w-14 h-14 rounded-full flex items-center justify-center mb-2 shadow-[0_0_20px_rgba(0,0,0,0.3)]" style={{ backgroundColor: `${stateColor}20`, border: `1px solid ${stateColor}40` }}>
+                    {isStandby ? <Clock className="w-6 h-6 text-gray-500" /> : 
+                     isWarning ? <AlertTriangle className="w-6 h-6 text-amber-500" /> : 
+                     isYawning ? <span className="text-2xl">🥱</span> :
+                     isDrowsy ? <Skull className="w-6 h-6 text-red-500 animate-pulse" /> : 
+                     isCritical ? <Skull className="w-6 h-6 text-red-600 animate-pulse" /> :
+                     <CheckCircle className="w-6 h-6 text-blue-500" />}
+                  </div>
+                  <span className="text-sm font-black tracking-tight" style={{ color: stateColor }}>{status.alert_state}</span>
                 </div>
               </div>
 
               {/* Mini Stats 2x2 */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-dg-card border border-white/5 rounded-2xl p-4 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Session Time</span>
-                  <span className="text-xl font-mono text-white">{formatTime(status.session_time)}</span>
+              <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="bg-dg-card border border-white/5 rounded-2xl p-3 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mb-1">Time</span>
+                  <span className="text-lg font-mono text-white">{formatTime(status.session_time)}</span>
                 </div>
-                <div className="bg-dg-card border border-white/5 rounded-2xl p-4 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Average EAR</span>
-                  <span className="text-xl font-mono text-gray-300">{avgEar}</span>
+                <div className="bg-dg-card border border-white/5 rounded-2xl p-3 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mb-1">Avg EAR</span>
+                  <span className="text-lg font-mono text-gray-300">{avgEar}</span>
                 </div>
-                <div className="bg-dg-card border border-white/5 rounded-2xl p-4 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Drowsy Episodes</span>
-                  <span className={`text-xl font-mono ${stats.drowsyEpisodes > 0 ? 'text-red-400 font-bold' : 'text-gray-300'}`}>{stats.drowsyEpisodes}</span>
+                <div className="bg-dg-card border border-white/5 rounded-2xl p-3 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mb-1">Drowsy</span>
+                  <span className={`text-lg font-mono ${stats.drowsyEpisodes > 0 ? 'text-red-400 font-bold' : 'text-gray-300'}`}>{stats.drowsyEpisodes}</span>
                 </div>
-                <div className="bg-dg-card border border-white/5 rounded-2xl p-4 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
-                  <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-1">Total Sessions</span>
-                  <span className="text-xl font-mono text-blue-400">{stats.totalSessions}</span>
+                <div className="bg-dg-card border border-white/5 rounded-2xl p-3 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mb-1">Yawns</span>
+                  <span className={`text-lg font-mono ${stats.yawnEpisodes > 0 ? 'text-orange-400 font-bold' : 'text-gray-300'}`}>{stats.yawnEpisodes}</span>
+                </div>
+                <div className="bg-dg-card border border-white/5 rounded-2xl p-3 flex flex-col items-start backdrop-blur-xl hover:-translate-y-1 transition-transform col-span-2 lg:col-span-1">
+                  <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest mb-1">Sessions</span>
+                  <span className="text-lg font-mono text-blue-400">{stats.totalSessions}</span>
                 </div>
               </div>
 
