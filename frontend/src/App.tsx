@@ -767,7 +767,7 @@ function Dashboard({ user, handleSignOut }: { user: User, handleSignOut: () => v
             </div>
             
             <div className="flex justify-center gap-4">
-              <a href="https://github.com" className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 hover:scale-110 transition-all hover:shadow-[0_0_20px_rgba(255,255,255,0.2)] text-gray-300">
+              <a href="https://github.com/MukundBansal/drowseguard.git" className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 hover:scale-110 transition-all hover:shadow-[0_0_20px_rgba(255,255,255,0.2)] text-gray-300">
                 <Github className="w-5 h-5" />
               </a>
               <a href="https://linkedin.com" className="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center hover:bg-blue-600 hover:border-blue-500 hover:scale-110 transition-all hover:shadow-[0_0_20px_rgba(59,130,246,0.3)] text-blue-400 hover:text-white">
